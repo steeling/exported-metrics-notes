@@ -1,0 +1,363 @@
+- job_name: cadvisor
+  stream_parse: true
+  follow_redirects: false
+  metrics_path: /metrics/cadvisor
+  scheme: https
+  bearer_token_file: /etc/kubernetes/secrets/token
+  kubernetes_sd_configs:
+  - role: node
+    follow_redirects: false
+    api_server: https://hcp-kubernetes:443
+    tls_config:
+      insecure_skip_verify: true
+    bearer_token_file: /etc/kubernetes/secrets/token
+  proxy_url: https://konnectivity:8083
+  tls_config:
+    insecure_skip_verify: true
+    ca_file: /etc/kubernetes/secrets/ca.pem
+    cert_file: /etc/kubernetes/secrets/client.pem
+    key_file: /etc/kubernetes/secrets/client-key.pem
+  proxy_tls_config:
+    insecure_skip_verify: true
+    ca_file: /etc/kubernetes/secrets/ca.pem
+    cert_file: /etc/konnectivity/secrets/client.pem
+    key_file: /etc/konnectivity/secrets/client-key.pem
+  relabel_configs:
+  - source_labels:
+    - __name__
+    action: replace
+    regex: '.*'
+    target_label: scrape_location
+    replacement: overlay
+  metric_relabel_configs:
+  - action: keep
+    if: '{__name__=~"cadvisor_version_info|container_cpu_cfs_throttled_seconds_total|container_cpu_load_average_10s|container_cpu_system_seconds_total|container_cpu_usage_seconds_total|container_cpu_user_seconds_total|container_fs_reads_bytes_total|container_fs_writes_bytes_total|container_memory_cache|container_memory_failcnt|container_memory_failures_total|container_memory_mapped_file|container_memory_rss|container_memory_swap|container_memory_usage_bytes|container_memory_working_set_bytes|container_oom_events_total|container_spec_memory_limit_bytes|container_spec_memory_reservation_limit_bytes|container_spec_memory_swap_limit_bytes|container_scrape_error|container_tasks_state|go_gc_cpu_seconds_total|go_mutex_wait_seconds_total|go_threads|go_memstats_alloc_bytes_total|go_memstats_heap_alloc_bytes|go_memstats_heap_idle_bytes|go_memstats_heap_inuse_bytes|go_gomaxprocs|go_memstats_heap_objects|go_memlimit_bytes|go_gc_cycles_automatic_gc_cycles_total|go_goroutines|process_cpu_seconds_total|process_open_fds|process_start_time_seconds"}'
+  - action: keep
+    if: '{namespace=~"(kube-system|gatekeeper-system|tigera-operator|aks-istio-system|aks-istio-ingress|app-routing-system|^$)"}'
+- job_name: kube-proxy
+  follow_redirects: false
+  scheme: http
+  kubernetes_sd_configs:
+  - role: pod
+    follow_redirects: false
+    api_server: https://hcp-kubernetes:443
+    tls_config:
+      insecure_skip_verify: true
+    bearer_token_file: /etc/kubernetes/secrets/token
+    namespaces:
+      names:
+      - kube-system
+  proxy_url: http://localhost:8080
+  relabel_configs:
+  - source_labels: [__meta_kubernetes_namespace, __meta_kubernetes_pod_label_component, __meta_kubernetes_pod_container_name]
+    action: keep
+    regex: kube-system;kube-proxy;kube-proxy
+  - source_labels: [__address__]
+    action: replace
+    regex: ([^:]+)(?::\d+)?
+    replacement: ${1}:10249
+    target_label: __address__
+  - source_labels: [__meta_kubernetes_namespace]
+    action: replace
+    regex: .*
+    target_label: scrape_location
+    replacement: overlay
+- job_name: kubelet
+  follow_redirects: false
+  scheme: https
+  stream_parse: true
+  tls_config:
+    insecure_skip_verify: true
+    ca_file: /etc/kubernetes/secrets/ca.pem
+    cert_file: /etc/konnectivity/secrets/client.pem
+    key_file: /etc/konnectivity/secrets/client-key.pem 
+  bearer_token_file: /etc/kubernetes/secrets/token
+  kubernetes_sd_configs:
+  - role: node
+    follow_redirects: false
+    api_server: https://hcp-kubernetes:443
+    tls_config:
+      ca_file: /etc/kubernetes/secrets/ca.pem
+      insecure_skip_verify: true
+    bearer_token_file: /etc/kubernetes/secrets/token
+  proxy_url: https://konnectivity:8083
+  proxy_tls_config:
+    ca_file: /etc/kubernetes/secrets/ca.pem
+    cert_file: /etc/konnectivity/secrets/client.pem
+    key_file: /etc/konnectivity/secrets/client-key.pem
+  relabel_configs:
+  - source_labels: [__meta_kubernetes_node_name]
+    action: replace
+    regex: .*
+    target_label: scrape_location
+    replacement: overlay
+  metric_relabel_configs:
+  - if: '{__name__=~"(kubelet_container_log_filesystem_used_bytes|storage_operation_duration_seconds_bucket|rest_client_response_size_bytes_bucket|volume_operation_total_seconds_bucket)"}'
+    action: drop
+- job_name: node_runtime
+  follow_redirects: false
+  metrics_path: /v1/metrics
+  scheme: http
+  stream_parse: true
+  proxy_url: http://localhost:8080
+  kubernetes_sd_configs:
+  - role: node
+    follow_redirects: false
+    api_server: https://hcp-kubernetes:443
+    tls_config:
+      ca_file: /etc/kubernetes/secrets/ca.pem
+      insecure_skip_verify: true
+    bearer_token_file: /etc/kubernetes/secrets/token
+  relabel_configs:
+  - source_labels: [__address__]
+    action: replace
+    regex: ([^:]+)(?::\d+)?
+    replacement: ${1}:10257
+    target_label: __address__
+  - action: replace
+    source_labels: [__meta_kubernetes_node_label_kubernetes_azure_com_node_image_version]
+    regex: (.+)
+    target_label: kubernetes_azure_com_node_image_version
+  - action: replace
+    source_labels: [__meta_kubernetes_node_label_beta_kubernetes_io_os]
+    regex: (.+)
+    target_label: os
+  - action: replace
+    source_labels: [__meta_kubernetes_node_label_kubernetes_io_os]
+    regex: (.+)
+    target_label: os
+  - action: replace
+    source_labels: [__meta_kubernetes_node_label_agentpool]
+    regex: (.+)
+    target_label: nodepool
+  - action: keep
+    source_labels: [kubernetes_azure_com_node_image_version]
+    # For Linux, only vhd images built after 2021.06.01 have this metrics ep exposed
+    # node-image-version examples of a Linux node:
+    #   AKSUbuntu-1804gen2containerd-2021.07.10  (YYYY.MM.DD)
+    #   AKSUbuntu-1804gen2containerd-202303.06.0 (YYYYMM.DD.$revision)
+    # For Windows, the containerd metrics endpoint is exposed the configuration setup by VMSS CSE, supported since
+    # 0729 release of aks-rp, as deciding aks-rp release node info is not possible, we regard all the Windows
+    # containerd nodepool created after July have the metrics endpoint exposed.
+    # node-image-version example of a Windows node: AKSWindows-2019-containerd-17763.2061.210714
+    regex: AKS(Ubuntu.*-.*containerd-(2021.(06|07|08|09|10|11|12).\d+|202[2-9].+)|CBLMariner-.+|Windows-2019-containerd-\d+.\d+.(21(08|09|10|11|12)\d+|2[2-9]\d+)|Windows-202[2-9]-containerd-.+)
+  - source_labels: [__meta_kubernetes_node_name]
+    action: replace
+    regex: .*
+    target_label: scrape_location
+    replacement: overlay
+  metric_relabel_configs:
+  # Use __tmp_scrape=true to mark time series we want to keep; everything else will be dropped.
+  - source_labels: [__name__, grpc_method]
+    regex: grpc_server_handled_total;RunPodSandbox
+    target_label: __tmp_scrape
+    replacement: true
+  - source_labels: [__name__]
+    regex: containerd_cri.*
+    target_label: __tmp_scrape
+    replacement: true
+  - if: '{__tmp_scrape=~".*"}'
+    action: keep
+  - action: labeldrop
+    regex: __tmp_scrape
+  - source_labels: [label_beta_kubernetes_io_os]
+    regex: (.+)
+    target_label: os
+  - source_labels: [label_kubernetes_io_os]
+    regex: (.+)
+    target_label: os
+    action: replace
+- job_name: node-problem-detector
+  follow_redirects: false
+  metrics_path: /metrics
+  scheme: http
+  bearer_token_file: /etc/kubernetes/secrets/token
+  kubernetes_sd_configs:
+  - role: node
+    follow_redirects: false
+    api_server: https://hcp-kubernetes:443
+    tls_config:
+      insecure_skip_verify: true
+    bearer_token_file: /etc/kubernetes/secrets/token
+  proxy_url: http://localhost:8080
+  relabel_configs:
+  - source_labels:
+    - __meta_kubernetes_node_label_kubernetes_io_os
+    action: keep
+    regex: linux
+  - source_labels:
+    - __address__
+    action: replace
+    regex: ([^:]+)(?::\d+)?
+    target_label: __address__
+    replacement: ${1}:20257
+  - source_labels:
+    - __name__
+    action: replace
+    regex: '.*'
+    target_label: scrape_location
+    replacement: overlay
+  metric_relabel_configs:
+  - action: keep
+    if: '{__name__=~"problem_counter|go_gc_cpu_seconds_total|go_mutex_wait_seconds_total|go_threads|go_memstats_alloc_bytes_total|go_memstats_heap_alloc_bytes|go_memstats_heap_idle_bytes|go_memstats_heap_inuse_bytes|go_gomaxprocs|go_memstats_heap_objects|go_memlimit_bytes|go_gc_cycles_automatic_gc_cycles_total|go_goroutines|process_cpu_seconds_total|process_open_fds|process_start_time_seconds"}'
+- job_name: node_exporter
+  stream_parse: true
+  follow_redirects: false
+  metrics_path: /metrics
+  scheme: https
+  bearer_token_file: /etc/kubernetes/secrets/token
+  kubernetes_sd_configs:
+  - role: node
+    follow_redirects: false
+    api_server: https://hcp-kubernetes:443
+    tls_config:
+      insecure_skip_verify: true
+    bearer_token_file: /etc/kubernetes/secrets/token
+  proxy_url: https://konnectivity:8083
+  tls_config:
+    insecure_skip_verify: true
+    ca_file: /etc/kubernetes/secrets/ca.pem
+    cert_file: /etc/kubernetes/secrets/client.pem
+    key_file: /etc/kubernetes/secrets/client-key.pem
+  proxy_tls_config:
+    insecure_skip_verify: true
+    ca_file: /etc/kubernetes/secrets/ca.pem
+    cert_file: /etc/konnectivity/secrets/client.pem
+    key_file: /etc/konnectivity/secrets/client-key.pem
+  relabel_configs:
+  - source_labels:
+    - __meta_kubernetes_node_label_kubernetes_io_os
+    action: keep
+    regex: linux
+  - source_labels:
+    - __address__
+    action: replace
+    regex: ([^:]+)(?::\d+)?
+    target_label: __address__
+    replacement: ${1}:19100
+  - source_labels:
+    - __name__
+    action: replace
+    regex: '.*'
+    target_label: scrape_location
+    replacement: overlay
+  metric_relabel_configs:
+  - action: keep
+    if: '{__name__=~"node_cpu_guest_seconds_total|node_cpu_seconds_total|node_filesystem_device_error|node_infiniband_excessive_buffer_overrun_errors_total|node_infiniband_link_downed_total|node_infiniband_link_error_recovery_total|node_infiniband_local_link_integrity_errors_total|node_infiniband_port_constraint_errors_received_total|node_infiniband_port_constraint_errors_transmitted_total|node_infiniband_port_data_received_bytes_total|node_infiniband_port_data_transmitted_bytes_total|node_infiniband_port_discards_transmitted_total|node_infiniband_port_errors_received_total|node_infiniband_port_packets_received_total|node_infiniband_port_packets_transmitted_total|node_infiniband_symbol_error_total|node_infiniband_unicast_packets_received_total|node_infiniband_unicast_packets_transmitted_total|node_infiniband_vl15_dropped_total|node_load1|node_memory_HardwareCorrupted_bytes|node_memory_MemAvailable_bytes|node_memory_MemTotal_bytes|node_memory_Mlocked_bytes|node_memory_Unevictable_bytes|node_netstat_Icmp6_InErrors|node_netstat_Icmp_InErrors|node_netstat_TcpExt_ListenDrops|node_netstat_TcpExt_ListenOverflows|node_netstat_TcpExt_TCPSynRetrans|node_netstat_TcpExt_TCPTimeouts|node_netstat_Tcp_InErrs|node_netstat_Tcp_RetransSegs|node_netstat_Udp6_InErrors|node_netstat_Udp_InErrors|node_network_receive_bytes_total|node_network_receive_drop_total|node_network_receive_errs_total|node_network_receive_packets_total|node_network_transmit_bytes_total|node_network_transmit_drop_total|node_network_transmit_errs_total|node_network_transmit_packets_total|node_network_transmit_queue_length|node_network_up|node_nf_conntrack_entries|node_softnet_backlog_len|node_softnet_cpu_collision_total|node_softnet_dropped_total"}'
+- job_name: csi-azureblob-node
+  stream_parse: true
+  follow_redirects: false
+  metrics_path: /metrics
+  scheme: http
+  bearer_token_file: /etc/kubernetes/secrets/token
+  kubernetes_sd_configs:
+  - role: pod
+    follow_redirects: false
+    api_server: https://hcp-kubernetes:443
+    tls_config:
+      insecure_skip_verify: true
+    bearer_token_file: /etc/kubernetes/secrets/token
+    namespaces:
+      names:
+      - kube-system
+  proxy_url: http://localhost:8080
+  relabel_configs:
+  - source_labels:
+    - __meta_kubernetes_pod_container_name
+    action: keep
+    regex: azureblob
+  - source_labels:
+    - __meta_kubernetes_pod_label_app
+    action: keep
+    regex: csi-azureblob.*
+  - source_labels:
+    - __meta_kubernetes_pod_container_port_name
+    action: keep
+    regex: metrics
+  - source_labels:
+    - __name__
+    action: replace
+    regex: '.*'
+    target_label: scrape_location
+    replacement: overlay
+  metric_relabel_configs:
+  - action: keep
+    if: '{__name__=~"grpc_server_started_total|grpc_server_handled_total|grpc_server_msg_received_total|grpc_server_msg_sent_total|go_gc_cpu_seconds_total|go_mutex_wait_seconds_total|go_threads|go_memstats_alloc_bytes_total|go_memstats_heap_alloc_bytes|go_memstats_heap_idle_bytes|go_memstats_heap_inuse_bytes|go_gomaxprocs|go_memstats_heap_objects|go_memlimit_bytes|go_gc_pauses_seconds_bucket|go_gc_cycles_automatic_gc_cycles_total|go_gc_heap_allocs_by_size_bytes_total_bucket|go_goroutines|process_cpu_seconds_total|process_open_fds|process_start_time_seconds"}'
+- job_name: csi-azuredisk-node
+  stream_parse: true
+  follow_redirects: false
+  metrics_path: /metrics
+  scheme: http
+  bearer_token_file: /etc/kubernetes/secrets/token
+  kubernetes_sd_configs:
+  - role: pod
+    follow_redirects: false
+    api_server: https://hcp-kubernetes:443
+    tls_config:
+      insecure_skip_verify: true
+    bearer_token_file: /etc/kubernetes/secrets/token
+    namespaces:
+      names:
+      - kube-system
+  proxy_url: http://localhost:8080
+  relabel_configs:
+  - source_labels:
+    - __meta_kubernetes_pod_container_name
+    action: keep
+    regex: azuredisk
+  - source_labels:
+    - __meta_kubernetes_pod_label_app
+    action: keep
+    regex: csi-azuredisk.*
+  - source_labels:
+    - __meta_kubernetes_pod_container_port_name
+    action: keep
+    regex: metrics
+  - source_labels:
+    - __name__
+    action: replace
+    regex: '.*'
+    target_label: scrape_location
+    replacement: overlay
+  metric_relabel_configs:
+  - action: keep
+    if: '{__name__=~"grpc_server_started_total|grpc_server_handled_total|grpc_server_msg_received_total|grpc_server_msg_sent_total|go_gc_cpu_seconds_total|go_mutex_wait_seconds_total|go_threads|go_memstats_alloc_bytes_total|go_memstats_heap_alloc_bytes|go_memstats_heap_idle_bytes|go_memstats_heap_inuse_bytes|go_gomaxprocs|go_memstats_heap_objects|go_memlimit_bytes|go_gc_pauses_seconds_bucket|go_gc_cycles_automatic_gc_cycles_total|go_gc_heap_allocs_by_size_bytes_total_bucket|go_goroutines|process_cpu_seconds_total|process_open_fds|process_start_time_seconds"}'
+- job_name: csi-azurefile-node
+  stream_parse: true
+  follow_redirects: false
+  metrics_path: /metrics
+  scheme: http
+  bearer_token_file: /etc/kubernetes/secrets/token
+  kubernetes_sd_configs:
+  - role: pod
+    follow_redirects: false
+    api_server: https://hcp-kubernetes:443
+    tls_config:
+      insecure_skip_verify: true
+    bearer_token_file: /etc/kubernetes/secrets/token
+    namespaces:
+      names:
+      - kube-system
+  proxy_url: http://localhost:8080
+  relabel_configs:
+  - source_labels:
+    - __meta_kubernetes_pod_container_name
+    action: keep
+    regex: azurefile
+  - source_labels:
+    - __meta_kubernetes_pod_label_app
+    action: keep
+    regex: csi-azurefile.*
+  - source_labels:
+    - __meta_kubernetes_pod_container_port_name
+    action: keep
+    regex: metrics
+  - source_labels:
+    - __name__
+    action: replace
+    regex: '.*'
+    target_label: scrape_location
+    replacement: overlay
+  metric_relabel_configs:
+  - action: keep
+    if: '{__name__=~"grpc_server_started_total|grpc_server_handled_total|grpc_server_msg_received_total|grpc_server_msg_sent_total|go_gc_cpu_seconds_total|go_mutex_wait_seconds_total|go_threads|go_memstats_alloc_bytes_total|go_memstats_heap_alloc_bytes|go_memstats_heap_idle_bytes|go_memstats_heap_inuse_bytes|go_gomaxprocs|go_memstats_heap_objects|go_memlimit_bytes|go_gc_pauses_seconds_bucket|go_gc_cycles_automatic_gc_cycles_total|go_gc_heap_allocs_by_size_bytes_total_bucket|go_goroutines|process_cpu_seconds_total|process_open_fds|process_start_time_seconds"}'
